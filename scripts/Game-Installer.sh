@@ -1477,6 +1477,10 @@ if [ -z "$APA_SIZE" ] || [ -z "$LANG" ]; then
     error_msg "Error" "Missing required value(s) in ${OPL}/version.txt"
 fi
 
+LAUNCHER=$(awk -F' *= *' '$1=="LAUNCHER"{print $2}' "${OPL}/version.txt")
+PROGRESSIVE=$(awk -F' *= *' '$1=="PROGRESSIVE"{print $2}' "${OPL}/version.txt")
+WIDESCREEN=$(awk -F' *= *' '$1=="WIDESCREEN"{print $2}' "${OPL}/version.txt")
+
 # Check if the Python virtual environment exists
 if [ -f "./scripts/venv/bin/activate" ]; then
     echo "The Python virtual environment exists." >> "${LOG_FILE}"
@@ -1664,12 +1668,55 @@ echo "     - Small, fast, and modular PS2 device emulator:"
 echo "       https://github.com/rickgaiser/neutrino"
 echo
 
+current_launcher="${LAUNCHER:-OPL}"
 while true; do
-    read -p "Enter 1 or 2: " choice
+    read -p "Enter 1 or 2 [current: $current_launcher]: " choice
     case "$choice" in
         1) LAUNCHER="OPL"; DESC2="Open PS2 Loader (OPL)"; break ;;
         2) LAUNCHER="NEUTRINO"; DESC2="Neutrino"; break ;;
         *) echo; echo "Invalid choice. Please enter 1 or 2." ;;
+    esac
+done
+
+SPLASH
+
+echo "Would you like to force progressive scan (480p) for PS2 games?"
+echo
+echo "  - Forces the PS2 to output video at 480p progressive scan instead of 480i."
+echo "  - Requires a TV or display that supports 480p input."
+if [[ "$LAUNCHER" == "NEUTRINO" ]]; then
+    echo "  - Applied via Neutrino's -gsm=fp option."
+else
+    echo "  - Note: For OPL, configure progressive scan in OPL's per-game settings."
+fi
+echo
+
+current_prog="${PROGRESSIVE:-no}"
+while true; do
+    read -p "Enable progressive scan? (y/n) [current: $current_prog]: " prog_choice
+    case "$prog_choice" in
+        [Yy]) PROGRESSIVE="yes"; DESC_PROG="Yes (480p)"; break ;;
+        [Nn]) PROGRESSIVE="no"; DESC_PROG="No (480i)"; break ;;
+        *) echo; echo "Please enter y or n." ;;
+    esac
+done
+
+SPLASH
+
+echo "Would you like to force 16:9 widescreen for PS2 games?"
+echo
+echo "  - Generates OPL CFG files so games display in 16:9 widescreen aspect ratio."
+echo "  - Only effective for games that natively support widescreen mode."
+echo "  - Games with user-supplied CFG files in the games/CFG folder are not affected."
+echo
+
+current_ws="${WIDESCREEN:-no}"
+while true; do
+    read -p "Enable 16:9 widescreen? (y/n) [current: $current_ws]: " ws_choice
+    case "$ws_choice" in
+        [Yy]) WIDESCREEN="yes"; DESC_WS="Yes (16:9)"; break ;;
+        [Nn]) WIDESCREEN="no"; DESC_WS="No (4:3)"; break ;;
+        *) echo; echo "Please enter y or n." ;;
     esac
 done
 
@@ -1732,6 +1779,8 @@ echo "Linux Games Folder: $GAMES_PATH" >> "${LOG_FILE}"
 echo "Games Folder: $display_path" | tee -a "${LOG_FILE}"
 echo "Install Type: $DESC1" | tee -a "${LOG_FILE}"
 echo "Game Launcher: $DESC2" | tee -a "${LOG_FILE}"
+echo "Progressive Scan: $DESC_PROG" | tee -a "${LOG_FILE}"
+echo "Widescreen (16:9): $DESC_WS" | tee -a "${LOG_FILE}"
 if [ -n "$HDTVFIX" ]; then
     case "$HDTVFIX" in
         [Yy]) HDTVFIX="Yes" ;;
@@ -1744,6 +1793,25 @@ read -n 1 -s -r -p "Press any key to continue..."
 echo
 
 prevent_sleep_start
+
+# Save launcher and display settings to version.txt
+if grep -q "^LAUNCHER =" "${OPL}/version.txt"; then
+    sed -i "s|^LAUNCHER =.*|LAUNCHER = $LAUNCHER|" "${OPL}/version.txt"
+else
+    echo "LAUNCHER = $LAUNCHER" >> "${OPL}/version.txt"
+fi
+
+if grep -q "^PROGRESSIVE =" "${OPL}/version.txt"; then
+    sed -i "s|^PROGRESSIVE =.*|PROGRESSIVE = $PROGRESSIVE|" "${OPL}/version.txt"
+else
+    echo "PROGRESSIVE = $PROGRESSIVE" >> "${OPL}/version.txt"
+fi
+
+if grep -q "^WIDESCREEN =" "${OPL}/version.txt"; then
+    sed -i "s|^WIDESCREEN =.*|WIDESCREEN = $WIDESCREEN|" "${OPL}/version.txt"
+else
+    echo "WIDESCREEN = $WIDESCREEN" >> "${OPL}/version.txt"
+fi
 
 # Delete existing PP partitions
 
@@ -2664,6 +2732,11 @@ titleid = $game_id
 arg = -mode=ata
 arg = -dvd=mass0:/$disc_type/$file_name
 arg = -noinit
+EOL
+            if [[ "$PROGRESSIVE" == "yes" ]]; then
+                echo "arg = -gsm=fp" >> "${game_dir}/system.cnf"
+            fi
+            cat >> "${game_dir}/system.cnf" <<EOL
 skip_argv0 = 0
 EOL
         elif [ "$launcher_value" = "POPS" ]; then
@@ -2727,6 +2800,36 @@ done
 # Print message based on the check
 if ! $files_exist; then
     echo "No OPL files to copy." | tee -a "${LOG_FILE}"
+fi
+
+# Handle widescreen CFG files for PS2 games
+if [[ -s "${ALL_GAMES}" ]]; then
+    if [[ "$INSTALL_TYPE" == "sync" ]]; then
+        # In sync mode, remove installer-generated widescreen CFGs when widescreen is disabled
+        while IFS='|' read -r title game_id publisher disc_type file_name; do
+            if [[ "$disc_type" != "POPS" ]]; then
+                user_cfg="${GAMES_PATH}/CFG/${game_id}.cfg"
+                opl_cfg="${OPL}/CFG/${game_id}.cfg"
+                if [[ ! -f "$user_cfg" ]] && [[ "$WIDESCREEN" != "yes" ]] && [[ -f "$opl_cfg" ]]; then
+                    rm -f "$opl_cfg" 2>>"${LOG_FILE}"
+                fi
+            fi
+        done < "${ALL_GAMES}"
+    fi
+    if [[ "$WIDESCREEN" == "yes" ]]; then
+        echo | tee -a "${LOG_FILE}"
+        echo "Generating widescreen CFG files for PS2 games..." | tee -a "${LOG_FILE}"
+        while IFS='|' read -r title game_id publisher disc_type file_name; do
+            if [[ "$disc_type" != "POPS" ]]; then
+                user_cfg="${GAMES_PATH}/CFG/${game_id}.cfg"
+                opl_cfg="${OPL}/CFG/${game_id}.cfg"
+                if [[ ! -f "$user_cfg" ]]; then
+                    echo "widescreen=1" > "$opl_cfg"
+                    echo "Created widescreen CFG for $game_id" | tee -a "${LOG_FILE}"
+                fi
+            fi
+        done < "${ALL_GAMES}"
+    fi
 fi
 
 echo | tee -a "${LOG_FILE}"

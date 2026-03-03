@@ -685,6 +685,48 @@ if [ "$MODE" = "install" ]; then
     esac
 
     echo "Language set to: $LANG" >> "${LOG_FILE}"
+
+    echo
+    echo "Please select a screen size:"
+    echo
+    echo "1) 4:3     - Standard aspect ratio"
+    echo "2) Full    - Stretch to fill the screen"
+    echo "3) 16:9    - Widescreen aspect ratio"
+    echo
+    read -p "Enter the number for your chosen screen size: " choice
+
+    case "$choice" in
+        2)
+            SCREEN="full"
+            ;;
+        3)
+            SCREEN="16:9"
+            ;;
+        *)
+            SCREEN="4:3"
+            ;;
+    esac
+
+    echo "Screen size set to: $SCREEN" >> "${LOG_FILE}"
+
+    echo
+    echo "Would you like to force progressive scan (480p) for PS2 games?"
+    echo
+    echo "  Requires a display that supports 480p. Applied via Neutrino's -gsm=fp option."
+    echo "  Has no effect if you use Open PS2 Loader as your game launcher."
+    echo
+    read -p "Enable progressive scan? (y/n): " prog_choice
+
+    case "$prog_choice" in
+        [Yy])
+            PROGRESSIVE="yes"
+            ;;
+        *)
+            PROGRESSIVE="no"
+            ;;
+    esac
+
+    echo "Progressive scan set to: $PROGRESSIVE" >> "${LOG_FILE}"
 else
 
     UPDATE_SPLASH
@@ -720,6 +762,7 @@ else
     CHAN_VER=$(awk -F' *= *' '$1=="CHAN_VER"{print $2}' "${OPL}/version.txt")
     ENTER=$(awk -F' *= *' '$1=="ENTER"{print $2}' "${OPL}/version.txt")
     SCREEN=$(awk -F' *= *' '$1=="SCREEN"{print $2}' "${OPL}/version.txt")
+    PROGRESSIVE=$(awk -F' *= *' '$1=="PROGRESSIVE"{print $2}' "${OPL}/version.txt")
 
     UNMOUNT_OPL
 fi
@@ -1273,6 +1316,35 @@ if [ "$MODE" = "update" ]; then
     error_msg "Failed to update $SYSCONF_XML";
 
     sudo cp -f "${SYSCONF_XML}" "${STORAGE_DIR}/__linux.4/bn/script/utility/sysconf.xml" || error_msg "Failed to replace sysconf.xml."
+elif [ "$MODE" = "install" ] && [[ "$SCREEN" != "4:3" ]] ; then
+    if [[ "$SCREEN" == "full" ]]; then
+        case "$LANG" in
+            eng) SIZE_NAME="Full" ;;
+            fre) SIZE_NAME="Plein écran" ;;
+            spa) SIZE_NAME="Pantalla Completa" ;;
+            ger) SIZE_NAME="Ganzer Bildschirm" ;;
+            ita) SIZE_NAME="Schermo Intero" ;;
+            dut) SIZE_NAME="Volledig" ;;
+            por) SIZE_NAME="Completo" ;;
+        esac
+    elif [[ "$SCREEN" == "16:9" ]]; then
+        SIZE_NAME="16:9"
+    fi
+
+    mkdir -p "${SCRIPTS_DIR}/tmp"
+    sudo cp "${STORAGE_DIR}/__linux.4/bn/script/utility/sysconf.xml" "${SYSCONF_XML}" || error_msg "Failed to copy sysconf.xml"
+
+    sed -i "/<menu id=\"sysconf_value_2_0\">/,/<\/menu>/ {
+        /<item value=/ {
+            s|<item value=.*|<item value=\"$SIZE_NAME\"/>|
+            :done
+            n
+            b done
+        }
+    }" "$SYSCONF_XML" ||
+    error_msg "Failed to update $SYSCONF_XML";
+
+    sudo cp -f "${SYSCONF_XML}" "${STORAGE_DIR}/__linux.4/bn/script/utility/sysconf.xml" || error_msg "Failed to replace sysconf.xml."
 fi
 
 UNMOUNT_ALL
@@ -1367,7 +1439,8 @@ if [ "$MODE" = "install" ]; then
     else
         echo "ENTER = X" >> "$OPL/version.txt"
     fi
-    echo "SCREEN = 4:3" >> "$OPL/version.txt"
+    echo "SCREEN = $SCREEN" >> "$OPL/version.txt"
+    echo "PROGRESSIVE = $PROGRESSIVE" >> "$OPL/version.txt"
 
 else
     if [[ -f "${OPL}/version.txt" ]]; then
@@ -1408,6 +1481,10 @@ else
 
         if [[ -z "$SCREEN" ]]; then
             echo "SCREEN = 4:3" >> "$OPL/version.txt"
+        fi
+
+        if [[ -z "$PROGRESSIVE" ]]; then
+            echo "PROGRESSIVE = no" >> "$OPL/version.txt"
         fi
 
     else
