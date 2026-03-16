@@ -548,6 +548,63 @@ CREATE_VMC() {
     cp -rf "${POPS_DIR}/${VMC_FOLDER}/"* "${STORAGE_DIR}/__common/POPS"
 }
 
+APPLY_PS2_LOADER_OPTIONS() {
+
+    echo | tee -a "${LOG_FILE}"
+    echo -n "Applying PS2 loader options..." | tee -a "${LOG_FILE}"
+
+    # Create nhddl directory for per-game YAML files
+    mkdir -p "${OPL}/nhddl"
+
+    # Process each PS2 game
+    exec 3< "${PS2_LIST}"
+    while IFS='|' read -r title game_id publisher disc_type file_name jpn_title <&3; do
+
+        cfg_file="${OPL}/CFG/${game_id}.cfg"
+        iso_name="${file_name%.*}"
+        yaml_file="${OPL}/nhddl/${iso_name}.yaml"
+
+        # GSM / 480p forcing
+        if [[ "$GSM_480P" == "y" ]]; then
+            # OPL: enable GSM with 480p @60Hz
+            if ! grep -q '^\$EnableGSM=' "$cfg_file" 2>/dev/null; then
+                printf '$GSMSource=1\r\n' >> "$cfg_file"
+                printf '$EnableGSM=1\r\n' >> "$cfg_file"
+                printf '$GSMVMode=8\r\n' >> "$cfg_file"
+                printf '$GSMFIELDFix=0\r\n' >> "$cfg_file"
+            fi
+            # Neutrino: add gsm to NHDDL YAML
+            if [[ ! -f "$yaml_file" ]]; then
+                printf 'gsm: fp\n' > "$yaml_file"
+            elif ! grep -q '^gsm:' "$yaml_file"; then
+                printf 'gsm: fp\n' >> "$yaml_file"
+            fi
+        fi
+
+        # Enable cheats (OPL only — Neutrino has no cheat engine)
+        if [[ "$ENABLE_CHEATS" == "y" ]]; then
+            if ! grep -q '^\$EnableCheat=' "$cfg_file" 2>/dev/null; then
+                printf '$CheatsSource=1\r\n' >> "$cfg_file"
+                printf '$EnableCheat=1\r\n' >> "$cfg_file"
+                printf '$CheatMode=0\r\n' >> "$cfg_file"
+            fi
+        fi
+
+        # PS2 logo display (Neutrino only — OPL doesn't support this)
+        if [[ "$PS2_LOGO" == "y" ]]; then
+            if [[ ! -f "$yaml_file" ]]; then
+                printf 'logo:\n' > "$yaml_file"
+            elif ! grep -q '^logo:' "$yaml_file"; then
+                printf 'logo:\n' >> "$yaml_file"
+            fi
+        fi
+
+    done
+    exec 3<&-
+
+    echo " done." | tee -a "${LOG_FILE}"
+}
+
 POPS_SIZE_CKECK() {
 
     if [ "$INSTALL_TYPE" = "sync" ]; then
@@ -1432,6 +1489,24 @@ if [ -z "$APA_SIZE" ] || [ -z "$LANG" ]; then
     error_msg "Error" "Missing required value(s) in ${OPL}/version.txt"
 fi
 
+# Detect existing PS2 cheat files on the drive
+CHT_FILES_EXIST=false
+if find "${OPL}/CHT" -maxdepth 1 -name "*.cht" -print -quit 2>/dev/null | grep -q .; then
+    CHT_FILES_EXIST=true
+fi
+
+# Detect if GSM is already configured for any game
+GSM_ALREADY_SET=false
+if grep -rq '^\$EnableGSM=1' "${OPL}/CFG/" 2>/dev/null; then
+    GSM_ALREADY_SET=true
+fi
+
+# Detect if cheats are already enabled for any game
+CHEATS_ALREADY_SET=false
+if grep -rq '^\$EnableCheat=1' "${OPL}/CFG/" 2>/dev/null; then
+    CHEATS_ALREADY_SET=true
+fi
+
 UNMOUNT_OPL
 
 # Check if the Python virtual environment exists
@@ -1682,6 +1757,99 @@ if { [ "$INSTALL_TYPE" = "sync" ] && find "${GAMES_PATH}/POPS" -maxdepth 1 -type
     PFS_COMMANDS
 fi
 
+# PS2 loader options — only ask if PS2 games exist
+ps2_games_found=false
+if find "${GAMES_PATH}/CD" "${GAMES_PATH}/DVD" -maxdepth 1 -type f \( -iname "*.iso" -o -iname "*.zso" \) -print -quit 2>/dev/null | grep -q .; then
+    ps2_games_found=true
+fi
+
+if [[ "$ps2_games_found" == "true" ]]; then
+
+    # GSM / 480p progressive scan
+    if [[ "$GSM_ALREADY_SET" == "true" ]]; then
+        GSM_480P="y"
+    else
+        SPLASH
+        echo "Would you like to force 480p progressive scan for PS2 games?"
+        echo
+        echo "This uses GSM to output 480p instead of 480i. Recommended for HDTVs"
+        echo "and upscalers. Some games may have visual glitches."
+        echo
+        while true; do
+            read -p "Yes or No (y/n): " GSM_480P
+            case "$GSM_480P" in
+                [Yy]) GSM_480P="y"; break ;;
+                [Nn]) GSM_480P="n"; break ;;
+                *) echo; echo "Please enter y or n." ;;
+            esac
+        done
+    fi
+
+    # Widescreen patches — download from PS2-Widescreen/OPL-Widescreen-Cheats
+    SPLASH
+    echo "Would you like to download widescreen patches for PS2 games?"
+    echo
+    echo "Pre-built OPL cheat files from the PS2-Widescreen community project"
+    echo "will be downloaded and installed to the CHT folder on your PS2 drive."
+    echo "These patches force 16:9 output in supported games."
+    echo
+    echo "  Source: https://github.com/PS2-Widescreen/OPL-Widescreen-Cheats"
+    echo
+    while true; do
+        read -p "Yes or No (y/n): " WIDESCREEN
+        case "$WIDESCREEN" in
+            [Yy]) WIDESCREEN="y"; break ;;
+            [Nn]) WIDESCREEN="n"; break ;;
+            *) echo; echo "Please enter y or n." ;;
+        esac
+    done
+
+    # Cheats — enable OPL cheat engine if .cht files exist or will be downloaded
+    if [[ "$CHT_FILES_EXIST" == "true" ]] || [[ "$WIDESCREEN" == "y" ]]; then
+        if [[ "$CHEATS_ALREADY_SET" == "true" ]]; then
+            ENABLE_CHEATS="y"
+        else
+            SPLASH
+            echo "Would you like to enable the cheat engine for PS2 games?"
+            echo
+            if [[ "$WIDESCREEN" == "y" ]]; then
+                echo "This is required for widescreen patches to take effect."
+                echo "The OPL cheat engine (PS2RD) will be enabled for all PS2 games."
+            else
+                echo "Cheat files (.cht) were found on your PS2 drive."
+                echo "The OPL cheat engine (PS2RD) will be enabled for all PS2 games."
+            fi
+            echo
+            while true; do
+                read -p "Yes or No (y/n): " ENABLE_CHEATS
+                case "$ENABLE_CHEATS" in
+                    [Yy]) ENABLE_CHEATS="y"; break ;;
+                    [Nn]) ENABLE_CHEATS="n"; break ;;
+                    *) echo; echo "Please enter y or n." ;;
+                esac
+            done
+        fi
+    fi
+
+    # PS2 logo — show Sony PS2 logo before game (Neutrino only)
+    if [[ "$LAUNCHER" == "NEUTRINO" ]]; then
+        SPLASH
+        echo "Would you like to show the PS2 logo before each game?"
+        echo
+        echo "Displays the Sony PlayStation 2 startup animation before"
+        echo "launching each game. This is a Neutrino-specific feature."
+        echo
+        while true; do
+            read -p "Yes or No (y/n): " PS2_LOGO
+            case "$PS2_LOGO" in
+                [Yy]) PS2_LOGO="y"; break ;;
+                [Nn]) PS2_LOGO="n"; break ;;
+                *) echo; echo "Please enter y or n." ;;
+            esac
+        done
+    fi
+fi
+
 SPLASH
 
 echo "PS2 Drive Detected: $DEVICE" >> "${LOG_FILE}"
@@ -1695,6 +1863,26 @@ if [ -n "$HDTVFIX" ]; then
         [Nn]) HDTVFIX="No" ;;
     esac
     echo "HDTV fix for PS1 Games: $HDTVFIX"
+fi
+if [ "$GSM_480P" = "y" ]; then
+    echo "Force 480p (GSM): Yes" | tee -a "${LOG_FILE}"
+elif [ "$GSM_480P" = "n" ]; then
+    echo "Force 480p (GSM): No" | tee -a "${LOG_FILE}"
+fi
+if [ "$WIDESCREEN" = "y" ]; then
+    echo "Widescreen Patches: Yes" | tee -a "${LOG_FILE}"
+elif [ "$WIDESCREEN" = "n" ]; then
+    echo "Widescreen Patches: No" | tee -a "${LOG_FILE}"
+fi
+if [ "$ENABLE_CHEATS" = "y" ]; then
+    echo "OPL Cheat Engine: Yes" | tee -a "${LOG_FILE}"
+elif [ "$ENABLE_CHEATS" = "n" ]; then
+    echo "OPL Cheat Engine: No" | tee -a "${LOG_FILE}"
+fi
+if [ "$PS2_LOGO" = "y" ]; then
+    echo "PS2 Boot Logo: Yes" | tee -a "${LOG_FILE}"
+elif [ "$PS2_LOGO" = "n" ]; then
+    echo "PS2 Boot Logo: No" | tee -a "${LOG_FILE}"
 fi
 echo
 read -n 1 -s -r -p "Press any key to continue..."
@@ -2698,6 +2886,46 @@ done
 # Print message based on the check
 if ! $files_exist; then
     echo "No OPL files to copy." | tee -a "${LOG_FILE}"
+fi
+
+# Download widescreen patches if requested
+if [[ "$WIDESCREEN" == "y" ]]; then
+    echo | tee -a "${LOG_FILE}"
+    echo -n "Downloading widescreen patches..." | tee -a "${LOG_FILE}"
+    ws_url="https://github.com/PS2-Widescreen/OPL-Widescreen-Cheats/releases/download/Latest/OPL-Widescreen-Cheats.zip"
+    ws_zip="${SCRIPTS_DIR}/tmp/OPL-Widescreen-Cheats.zip"
+    ws_extract="${SCRIPTS_DIR}/tmp/ws_cheats"
+    rm -rf "$ws_zip" "$ws_extract"
+
+    if wget --quiet --timeout=30 --tries=3 -O "$ws_zip" "$ws_url" >> "${LOG_FILE}" 2>&1; then
+        echo " done." | tee -a "${LOG_FILE}"
+        echo -n "Installing widescreen patches..." | tee -a "${LOG_FILE}"
+        mkdir -p "$ws_extract"
+        if unzip -q -o "$ws_zip" -d "$ws_extract" >> "${LOG_FILE}" 2>&1; then
+            # Copy .cht files to OPL CHT folder (don't overwrite user files)
+            ws_cht_dir=$(find "$ws_extract" -type d -name "CHT" | head -n 1)
+            if [[ -n "$ws_cht_dir" ]]; then
+                find "$ws_cht_dir" -type f -name "*.cht" -exec cp --update=none {} "${OPL}/CHT/" \; >> "${LOG_FILE}" 2>&1
+                ws_count=$(find "$ws_cht_dir" -type f -name "*.cht" | wc -l)
+                echo " done. ($ws_count patches available)" | tee -a "${LOG_FILE}"
+            else
+                echo " no CHT directory found in archive." | tee -a "${LOG_FILE}"
+            fi
+        else
+            echo " failed to extract archive." | tee -a "${LOG_FILE}"
+        fi
+    else
+        echo " download failed." | tee -a "${LOG_FILE}"
+        echo "  Check your internet connection and try again." | tee -a "${LOG_FILE}"
+    fi
+    rm -rf "$ws_zip" "$ws_extract"
+fi
+
+# Apply PS2 loader options if any were selected
+if [[ "$GSM_480P" == "y" ]] || [[ "$ENABLE_CHEATS" == "y" ]] || [[ "$PS2_LOGO" == "y" ]]; then
+    if [ -s "${PS2_LIST}" ]; then
+        APPLY_PS2_LOADER_OPTIONS
+    fi
 fi
 
 echo | tee -a "${LOG_FILE}"
