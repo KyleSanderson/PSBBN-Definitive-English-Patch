@@ -2909,7 +2909,7 @@ if [[ "$WIDESCREEN" == "y" ]]; then
     ws_extract="${SCRIPTS_DIR}/tmp/ws_cheats"
     rm -rf "$ws_zip" "$ws_extract"
 
-    if wget --quiet --timeout=30 --tries=3 -O "$ws_zip" "$ws_url" >> "${LOG_FILE}" 2>&1; then
+    if curl -fsSL --max-time 60 --retry 3 -o "$ws_zip" "$ws_url" >> "${LOG_FILE}" 2>&1; then
         echo " done." | tee -a "${LOG_FILE}"
         echo -n "Installing widescreen patches..." | tee -a "${LOG_FILE}"
         mkdir -p "$ws_extract"
