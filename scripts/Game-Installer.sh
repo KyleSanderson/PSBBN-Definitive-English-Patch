@@ -2914,12 +2914,18 @@ if [[ "$WIDESCREEN" == "y" ]]; then
         echo -n "Installing widescreen patches..." | tee -a "${LOG_FILE}"
         mkdir -p "$ws_extract"
         if unzip -q -o "$ws_zip" -d "$ws_extract" >> "${LOG_FILE}" 2>&1; then
-            # Copy .cht files to OPL CHT folder (don't overwrite user files)
+            # Copy .cht files only for installed games (don't overwrite user files)
             ws_cht_dir=$(find "$ws_extract" -type d -name "CHT" | head -n 1)
             if [[ -n "$ws_cht_dir" ]]; then
-                find "$ws_cht_dir" -type f -name "*.cht" -exec cp --update=none {} "${OPL}/CHT/" \; >> "${LOG_FILE}" 2>&1
-                ws_count=$(find "$ws_cht_dir" -type f -name "*.cht" | wc -l)
-                echo " done. ($ws_count patches available)" | tee -a "${LOG_FILE}"
+                ws_count=0
+                while IFS='|' read -r _title game_id _rest; do
+                    ws_file="$ws_cht_dir/${game_id}.cht"
+                    if [[ -f "$ws_file" ]] && [[ ! -f "${OPL}/CHT/${game_id}.cht" ]]; then
+                        cp "$ws_file" "${OPL}/CHT/" >> "${LOG_FILE}" 2>&1
+                        ((ws_count++)) || true
+                    fi
+                done < "${PS2_LIST}"
+                echo " done. ($ws_count widescreen patches installed)" | tee -a "${LOG_FILE}"
             else
                 echo " no CHT directory found in archive." | tee -a "${LOG_FILE}"
             fi
