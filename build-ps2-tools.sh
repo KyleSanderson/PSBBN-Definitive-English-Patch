@@ -33,6 +33,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# DOCKER=1 is an accepted alias for BUILD_MODE=docker
+[[ "${DOCKER:-0}" == "1" ]] && BUILD_MODE="docker"
+
 # ---------------------------------------------------------------------------
 # Configuration — override via env vars or edit the defaults here
 # ---------------------------------------------------------------------------
@@ -56,7 +59,7 @@ NHDDL_SRC="$SCRIPT_DIR/nhddl-src"
 NEUTRINO_ASSETS="$SCRIPT_DIR/scripts/assets/neutrino"
 NHDDL_ASSETS="$SCRIPT_DIR/scripts/assets/NHDDL"
 
-die()  { echo "ERROR: $*" >&2; exit 1; }
+die()  { printf 'ERROR: %b\n' "$*" >&2; exit 1; }
 info() { echo "    $*"; }
 
 # ---------------------------------------------------------------------------
@@ -73,7 +76,8 @@ _platform_ps2dev_asset() {
     esac
 }
 
-# Download and install the latest ps2dev release to $HOME/ps2dev.
+# Download and install the latest (working) ps2dev release to $HOME/ps2dev.
+# Iterates through recent releases until one with a valid archive is found.
 _install_toolchain() {
     local asset
     asset=$(_platform_ps2dev_asset)
@@ -81,50 +85,60 @@ _install_toolchain() {
         || die "No pre-built ps2dev release for $(uname -s)/$(uname -m). Use BUILD_MODE=docker."
 
     echo "==> Installing PS2 toolchain..."
-    local tag
-    tag=$(curl -sf "https://api.github.com/repos/ps2dev/ps2dev/releases/latest" \
-          | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" \
-          2>/dev/null) || tag="latest"
+
+    # Fetch list of recent releases (up to 10) so we can skip any that are stubs
+    local releases_json
+    releases_json=$(curl -sf "https://api.github.com/repos/ps2dev/ps2dev/releases?per_page=10" \
+                    2>/dev/null) || releases_json='[]'
+    local tags
+    tags=$(python3 -c "
+import sys, json
+rels = json.loads('''$releases_json''')
+print(' '.join(r['tag_name'] for r in rels))
+" 2>/dev/null) || tags=""
+    # Fall back to trying latest if the API gave nothing
+    [[ -n "$tags" ]] || tags="latest"
+
     local dest="$HOME/ps2dev"
-    local url="https://github.com/ps2dev/ps2dev/releases/download/${tag}/${asset}"
     local tmp
     tmp=$(mktemp "/tmp/ps2dev-XXXXXX.tar.gz")
     trap 'rm -f "$tmp"' EXIT
 
-    info "Release : $tag  ($asset)"
-    info "Target  : $dest"
-    info "URL     : $url"
+    local tag url size
+    for tag in $tags; do
+        url="https://github.com/ps2dev/ps2dev/releases/download/${tag}/${asset}"
+        info "Trying : $tag  →  $url"
 
-    # Download to a temp file so we can verify integrity before extracting.
-    # The toolchain tarball is ~400 MB; use --retry so transient failures recover.
-    if ! curl -fL --retry 3 --retry-delay 5 --progress-bar "$url" -o "$tmp"; then
+        if ! curl -fL --retry 3 --retry-delay 5 --progress-bar "$url" -o "$tmp" 2>&1; then
+            info "  curl failed for $tag — trying next release..."
+            continue
+        fi
+
+        size=$(stat -c%s "$tmp" 2>/dev/null || stat -f%z "$tmp" 2>/dev/null || echo 0)
+        if (( size < 50000000 )); then
+            info "  $tag archive is only ${size} bytes (stub/broken) — skipping..."
+            if command -v xxd &>/dev/null; then
+                info "  Content preview: $(xxd -l 64 "$tmp" 2>/dev/null | head -2 || true)"
+            fi
+            continue
+        fi
+
+        # Valid archive found
+        info "Downloaded $(( size / 1024 / 1024 )) MB — looks good."
+        rm -rf "$dest"
+        mkdir -p "$(dirname "$dest")"
+        tar -xzf "$tmp" -C "$(dirname "$dest")"
         rm -f "$tmp"
-        die "Download failed. Check your internet connection and retry."
-    fi
+        trap - EXIT
+        [[ -x "$dest/ee/bin/mips64r5900el-ps2-elf-gcc" ]] \
+            || die "Toolchain extraction failed — archive may be corrupt. Delete $dest and retry."
+        info "Installed: $dest"
+        return 0
+    done
 
-    # Sanity check: must be a valid gzip and at least 50 MB
-    local size
-    size=$(stat -c%s "$tmp" 2>/dev/null || stat -f%z "$tmp" 2>/dev/null || echo 0)
-    if (( size < 50000000 )); then
-        rm -f "$tmp"
-        die "Downloaded archive is only ${size} bytes — likely incomplete. Retry."
-    fi
-    if ! file "$tmp" 2>/dev/null | grep -q "gzip\|compressed"; then
-        # 'file' may not be available everywhere; skip check if so
-        :
-    fi
-
-    # Remove any previous partial install before extracting
-    # (tarball has a top-level ps2dev/ dir → extracts to dest automatically)
-    rm -rf "$dest"
-    mkdir -p "$(dirname "$dest")"
-    tar -xzf "$tmp" -C "$(dirname "$dest")"
     rm -f "$tmp"
     trap - EXIT
-
-    [[ -x "$dest/ee/bin/mips64r5900el-ps2-elf-gcc" ]] \
-        || die "Toolchain extraction failed — the archive may be corrupt. Delete $dest and retry."
-    info "Installed: $dest"
+    die "All recent ps2dev releases returned stub archives for $asset.\nThis usually means GitHub is rate-limiting downloads without auth.\nOptions:\n  1. Manually download $asset from https://github.com/ps2dev/ps2dev/releases\n     and extract as ~/ps2dev/, then re-run this script.\n  2. Use BUILD_MODE=docker (requires Docker or Podman)."
 }
 
 # ---------------------------------------------------------------------------
@@ -216,6 +230,7 @@ _setup_native_toolchain() {
 }
 
 BUILD_MODE="${BUILD_MODE:-}"
+_BUILD_MODE_ORIG="$BUILD_MODE"
 CONTAINER_RUNTIME=""
 
 if [[ "$BUILD_MODE" != "docker" ]]; then
@@ -254,10 +269,12 @@ if [[ "$BUILD_MODE" != "native" ]]; then
         fi
     done
     if [[ -z "$CONTAINER_RUNTIME" ]]; then
-        if [[ -n "$(_platform_ps2dev_asset)" ]]; then
-            die "Toolchain install failed and no Docker/Podman found.\nCheck your internet connection or install Docker/Podman."
+        if [[ "${DOCKER:-0}" == "1" ]] || [[ "${_BUILD_MODE_ORIG:-}" == "docker" ]]; then
+            die "BUILD_MODE=docker was set but neither docker nor podman is installed.\nInstall Docker Desktop (https://docs.docker.com/get-docker/) or Podman, then retry."
+        elif [[ -n "$(_platform_ps2dev_asset)" ]]; then
+            die "Toolchain auto-install failed and no Docker/Podman found.\nOptions:\n  1. Manually download the PS2 toolchain from https://github.com/ps2dev/ps2dev/releases\n     and extract as ~/ps2dev/, then re-run this script.\n  2. Install Docker Desktop or Podman, then re-run with BUILD_MODE=docker."
         else
-            die "No PS2 toolchain found and no Docker/Podman available.\nInstall Docker or Podman, then re-run this script."
+            die "No PS2 toolchain found and no Docker/Podman available.\nInstall Docker Desktop (https://docs.docker.com/get-docker/) or Podman, then re-run this script."
         fi
     fi
 fi
