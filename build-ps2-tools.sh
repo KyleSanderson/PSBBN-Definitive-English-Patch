@@ -50,7 +50,8 @@ NHDDL_BRANCH="${NHDDL_BRANCH:-cheats}"
 # Container images — must match the project CI workflows
 # Neutrino: .github/workflows/compile.yml  → container: ps2max/dev:v20260228
 # NHDDL:    .github/workflows/build.yml    → container: ghcr.io/ps2homebrew/ps2homebrew:main
-NEUTRINO_IMAGE="${NEUTRINO_IMAGE:-ps2max/dev:v20260228}"
+# Use fully-qualified names so podman doesn't require unqualified-search registries
+NEUTRINO_IMAGE="${NEUTRINO_IMAGE:-docker.io/ps2max/dev:v20260228}"
 NHDDL_IMAGE="${NHDDL_IMAGE:-ghcr.io/ps2homebrew/ps2homebrew:main}"
 
 NEUTRINO_SRC="$SCRIPT_DIR/neutrino-src"

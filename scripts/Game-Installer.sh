@@ -2904,7 +2904,7 @@ fi
 if [[ "$WIDESCREEN" == "y" ]]; then
     echo | tee -a "${LOG_FILE}"
     echo -n "Downloading widescreen patches..." | tee -a "${LOG_FILE}"
-    ws_url="https://github.com/PS2-Widescreen/OPL-Widescreen-Cheats/releases/download/Latest/OPL-Widescreen-Cheats.zip"
+    ws_url="https://github.com/PS2-Widescreen/OPL-Widescreen-Cheats/releases/download/Latest/widescreen_hacks.zip"
     ws_zip="${SCRIPTS_DIR}/tmp/OPL-Widescreen-Cheats.zip"
     ws_extract="${SCRIPTS_DIR}/tmp/ws_cheats"
     rm -rf "$ws_zip" "$ws_extract"
