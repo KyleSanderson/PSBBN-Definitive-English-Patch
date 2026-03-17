@@ -581,12 +581,22 @@ APPLY_PS2_LOADER_OPTIONS() {
             fi
         fi
 
-        # Enable cheats (OPL only — Neutrino has no cheat engine)
+        # Enable cheats (both OPL and Neutrino support PS2RD cheat engine)
         if [[ "$ENABLE_CHEATS" == "y" ]]; then
+            # OPL: enable cheat engine in per-game .cfg
             if ! grep -q '^\$EnableCheat=' "$cfg_file" 2>/dev/null; then
                 printf '$CheatsSource=1\r\n' >> "$cfg_file"
                 printf '$EnableCheat=1\r\n' >> "$cfg_file"
                 printf '$CheatMode=0\r\n' >> "$cfg_file"
+            fi
+            # Neutrino: reference .cht file in NHDDL YAML (if the file exists)
+            cht_file="${OPL}/CHT/${game_id}.cht"
+            if [[ -f "$cht_file" ]]; then
+                if [[ ! -f "$yaml_file" ]]; then
+                    printf 'cht: /CHT/%s.cht\n' "$game_id" > "$yaml_file"
+                elif ! grep -q '^cht:' "$yaml_file"; then
+                    printf 'cht: /CHT/%s.cht\n' "$game_id" >> "$yaml_file"
+                fi
             fi
         fi
 
@@ -1505,6 +1515,8 @@ fi
 CHEATS_ALREADY_SET=false
 if grep -rq '^\$EnableCheat=1' "${OPL}/CFG/" 2>/dev/null; then
     CHEATS_ALREADY_SET=true
+elif grep -rq '^cht:' "${OPL}/nhddl/" 2>/dev/null; then
+    CHEATS_ALREADY_SET=true
 fi
 
 UNMOUNT_OPL
@@ -1785,11 +1797,11 @@ if [[ "$ps2_games_found" == "true" ]]; then
         done
     fi
 
-    # Widescreen patches — download from PS2-Widescreen/OPL-Widescreen-Cheats
+    # Widescreen patches (uses PS2RD cheat engine — supported by both OPL and Neutrino)
     SPLASH
     echo "Would you like to download widescreen patches for PS2 games?"
     echo
-    echo "Pre-built OPL cheat files from the PS2-Widescreen community project"
+    echo "Pre-built cheat files from the PS2-Widescreen community project"
     echo "will be downloaded and installed to the CHT folder on your PS2 drive."
     echo "These patches force 16:9 output in supported games."
     echo
@@ -1804,7 +1816,7 @@ if [[ "$ps2_games_found" == "true" ]]; then
         esac
     done
 
-    # Cheats — enable OPL cheat engine if .cht files exist or will be downloaded
+    # Cheats — enable PS2RD cheat engine if .cht files exist or will be downloaded
     if [[ "$CHT_FILES_EXIST" == "true" ]] || [[ "$WIDESCREEN" == "y" ]]; then
         if [[ "$CHEATS_ALREADY_SET" == "true" ]]; then
             ENABLE_CHEATS="y"
@@ -1814,10 +1826,10 @@ if [[ "$ps2_games_found" == "true" ]]; then
             echo
             if [[ "$WIDESCREEN" == "y" ]]; then
                 echo "This is required for widescreen patches to take effect."
-                echo "The OPL cheat engine (PS2RD) will be enabled for all PS2 games."
+                echo "The PS2RD cheat engine will be enabled for all PS2 games."
             else
                 echo "Cheat files (.cht) were found on your PS2 drive."
-                echo "The OPL cheat engine (PS2RD) will be enabled for all PS2 games."
+                echo "The PS2RD cheat engine will be enabled for all PS2 games."
             fi
             echo
             while true; do
