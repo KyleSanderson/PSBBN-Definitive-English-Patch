@@ -87,13 +87,43 @@ _install_toolchain() {
           2>/dev/null) || tag="latest"
     local dest="$HOME/ps2dev"
     local url="https://github.com/ps2dev/ps2dev/releases/download/${tag}/${asset}"
+    local tmp
+    tmp=$(mktemp "/tmp/ps2dev-XXXXXX.tar.gz")
+    trap 'rm -f "$tmp"' EXIT
+
     info "Release : $tag  ($asset)"
     info "Target  : $dest"
-    # Tarball contains a top-level ps2dev/ dir → extract to parent to get ~/ps2dev
+    info "URL     : $url"
+
+    # Download to a temp file so we can verify integrity before extracting.
+    # The toolchain tarball is ~400 MB; use --retry so transient failures recover.
+    if ! curl -fL --retry 3 --retry-delay 5 --progress-bar "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        die "Download failed. Check your internet connection and retry."
+    fi
+
+    # Sanity check: must be a valid gzip and at least 50 MB
+    local size
+    size=$(stat -c%s "$tmp" 2>/dev/null || stat -f%z "$tmp" 2>/dev/null || echo 0)
+    if (( size < 50000000 )); then
+        rm -f "$tmp"
+        die "Downloaded archive is only ${size} bytes — likely incomplete. Retry."
+    fi
+    if ! file "$tmp" 2>/dev/null | grep -q "gzip\|compressed"; then
+        # 'file' may not be available everywhere; skip check if so
+        :
+    fi
+
+    # Remove any previous partial install before extracting
+    # (tarball has a top-level ps2dev/ dir → extracts to dest automatically)
+    rm -rf "$dest"
     mkdir -p "$(dirname "$dest")"
-    curl -fL --progress-bar "$url" | tar -xz -C "$(dirname "$dest")"
+    tar -xzf "$tmp" -C "$(dirname "$dest")"
+    rm -f "$tmp"
+    trap - EXIT
+
     [[ -x "$dest/ee/bin/mips64r5900el-ps2-elf-gcc" ]] \
-        || die "Toolchain extraction failed — check your internet connection and retry."
+        || die "Toolchain extraction failed — the archive may be corrupt. Delete $dest and retry."
     info "Installed: $dest"
 }
 
