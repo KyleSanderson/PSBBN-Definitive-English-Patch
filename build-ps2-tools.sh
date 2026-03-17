@@ -16,10 +16,23 @@
 #   ./build-ps2-tools.sh            # build both
 #   ./build-ps2-tools.sh neutrino   # build Neutrino only
 #   ./build-ps2-tools.sh nhddl      # build NHDDL only
+#
+# Source repositories (override with env vars or edit the defaults below):
+#   NEUTRINO_REPO / NEUTRINO_BRANCH
+#   NHDDL_REPO    / NHDDL_BRANCH
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ---------------------------------------------------------------------------
+# Source repository configuration — override via env vars or edit here
+# ---------------------------------------------------------------------------
+NEUTRINO_REPO="${NEUTRINO_REPO:-https://github.com/kylesanderson/neutrino}"
+NEUTRINO_BRANCH="${NEUTRINO_BRANCH:-cheats}"
+
+NHDDL_REPO="${NHDDL_REPO:-https://github.com/kylesanderson/nhddl}"
+NHDDL_BRANCH="${NHDDL_BRANCH:-cheats}"
 
 NEUTRINO_SRC="$SCRIPT_DIR/neutrino-src"
 NHDDL_SRC="$SCRIPT_DIR/nhddl-src"
@@ -181,7 +194,10 @@ _install_nhddl_assets() {
 build_neutrino() {
     echo
     echo "==> Building Neutrino..."
-    [[ -d "$NEUTRINO_SRC" ]] || die "neutrino-src not found: $NEUTRINO_SRC"
+    if [[ ! -d "$NEUTRINO_SRC" ]]; then
+        echo "    Cloning $NEUTRINO_REPO (branch: $NEUTRINO_BRANCH)..."
+        git clone --depth=1 --branch "$NEUTRINO_BRANCH" "$NEUTRINO_REPO" "$NEUTRINO_SRC"
+    fi
 
     if [[ "$BUILD_MODE" == "native" ]]; then
         # mmcefhi.irx is not included in ps2sdk releases; copy it from the
@@ -217,7 +233,10 @@ build_neutrino() {
 build_nhddl() {
     echo
     echo "==> Building NHDDL..."
-    [[ -d "$NHDDL_SRC" ]] || die "nhddl-src not found: $NHDDL_SRC"
+    if [[ ! -d "$NHDDL_SRC" ]]; then
+        echo "    Cloning $NHDDL_REPO (branch: $NHDDL_BRANCH)..."
+        git clone --depth=1 --branch "$NHDDL_BRANCH" "$NHDDL_REPO" "$NHDDL_SRC"
+    fi
 
     if [[ "$BUILD_MODE" == "native" ]]; then
         ( cd "$NHDDL_SRC"; make )
